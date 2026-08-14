@@ -12,3 +12,11 @@ path = "src/main.rs"
 wry = { version = "0.56", features = ["devtools"] }
 tao = "0.36"
 serde_json = "1"
+
+# macOS 主菜单(Cmd+V/Cmd+C 等快捷键依赖 AppKit 菜单路由)
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = "0.3"
+objc2-foundation = "0.3"
+objc2-web-kit = { version = "0.3", features = ["WKContextMenuElementInfo"] }
+block2 = "0.6"
