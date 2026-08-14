@@ -111,6 +111,10 @@ fn arm_panic_hook() {
     }));
 }
 
+/// 整体禁用右键菜单:contextmenu 事件 preventDefault(WebKit 原生菜单随之消失);
+/// 编辑操作走 ⌘X/⌘C/⌘V(v0.1.3 已可用)
+const CONTEXT_DISABLE_JS: &str = "document.addEventListener('contextmenu',function(e){e.preventDefault();},true);";
+
 // ---------------- 自举页(带 toast 与错误面板) ----------------
 // 大胖鲸 logo 以 base64 内嵌(assets/boot-logo.b64,由 dsh-whale.jpg 生成)
 const LOGO_B64: &str = include_str!("../assets/boot-logo.b64");
@@ -298,119 +302,18 @@ fn ensure_webview_focus(wk_ptr: usize) {
 fn ensure_webview_focus(_wk_ptr: usize) {}
 
 // ============================================================
-// macOS 右键菜单接管:只保留 Cut / Copy / Paste
+// macOS:找到窗口里的 WKWebView(主菜单首响应者/焦点管理需要)
+// 右键菜单:整体禁用(JS contextmenu preventDefault 注入,见 CONTEXT_DISABLE_JS)
 // ============================================================
 #[cfg(target_os = "macos")]
 mod context_menu {
-    use block2::Block;
-    use objc2::define_class;
-    use objc2::msg_send;
-    use objc2::rc::Retained;
-    use objc2::runtime::{AnyClass, AnyObject, NSObject, ProtocolObject, Sel};
     use objc2::ClassType;
-    use objc2::MainThreadOnly;
-    use objc2_app_kit::{
-        NSMenuItem, NSModalResponse, NSModalResponseOK, NSOpenPanel, NSView,
-    };
-    use objc2_foundation::{MainThreadMarker, NSArray, NSObjectProtocol, NSURL, NSString};
-    use objc2_web_kit::{
-        WKFrameInfo, WKMediaCaptureType, WKOpenPanelParameters, WKPermissionDecision,
-        WKSecurityOrigin, WKUIDelegate, WKWebView,
-    };
+    use objc2_app_kit::NSView;
+    use objc2_foundation::NSObjectProtocol;
+    use objc2_web_kit::WKWebView;
 
-    // 我们的 UIDelegate:接管右键菜单(仅 Cut/Copy/Paste),其余方法复刻 wry 的行为
-    // (文件上传面板、媒体权限直接 Grant),保证 dsh 附件上传等功能不受影响。
-    define_class!(
-        #[unsafe(super(NSObject))]
-        #[thread_kind = MainThreadOnly]
-        pub struct DshContextMenuDelegate;
-
-        unsafe impl NSObjectProtocol for DshContextMenuDelegate {}
-
-        unsafe impl WKUIDelegate for DshContextMenuDelegate {
-            // 右键菜单:只返回 Cut/Copy/Paste(替换 WebKit 默认菜单,拼写检查等全部移除)
-            #[unsafe(method(webView:contextMenuConfigurationForElement:completionHandler:))]
-            fn context_menu(
-                &self,
-                _webview: &WKWebView,
-                _element: *const AnyObject, // WKContextMenuElementInfo(绑定为空壳,用原始指针)
-                handler: &Block<dyn Fn(*mut AnyObject)>,
-            ) {
-                crate::log_msg("[右键菜单] contextMenuConfigurationForElement 回调触发");
-                unsafe {
-                    let mtm = MainThreadMarker::new().unwrap();
-                    let cut = menu_item(mtm, "Cut", "cut:");
-                    let copy = menu_item(mtm, "Copy", "copy:");
-                    let paste = menu_item(mtm, "Paste", "paste:");
-                    let items = NSArray::from_slice(&[&*cut, &*copy, &*paste]);
-
-                    // WKContextMenuConfiguration 不在 objc2-web-kit 绑定中,运行时查找
-                    let cls = AnyClass::get(c"WKContextMenuConfiguration")
-                        .expect("找不到 WKContextMenuConfiguration");
-                    let config: *mut AnyObject = msg_send![cls, new];
-                    let _: () = msg_send![config, setMenuItems: &*items];
-                    // 不 release:把 +1 交给 WebKit 持有(autorelease 会过早回收导致回退默认菜单)
-
-                    (*handler).call((config,));
-                    crate::log_msg("[右键菜单] 已提交自定义配置(Cut/Copy/Paste)");
-                }
-            }
-
-            /// 文件上传面板(复刻 wry 行为,保证 <input type=file> 附件可用)
-            #[unsafe(method(webView:runOpenPanelWithParameters:initiatedByFrame:completionHandler:))]
-            fn run_open_panel(
-                &self,
-                _webview: &WKWebView,
-                open_panel_params: &WKOpenPanelParameters,
-                _frame: &WKFrameInfo,
-                handler: &Block<dyn Fn(*const NSArray<NSURL>)>,
-            ) {
-                unsafe {
-                    if let Some(mtm) = MainThreadMarker::new() {
-                        let open_panel = NSOpenPanel::openPanel(mtm);
-                        open_panel.setCanChooseFiles(true);
-                        open_panel
-                            .setAllowsMultipleSelection(open_panel_params.allowsMultipleSelection());
-                        open_panel.setCanChooseDirectories(open_panel_params.allowsDirectories());
-                        let ok: NSModalResponse = open_panel.runModal();
-                        if ok == NSModalResponseOK {
-                            let urls = open_panel.URLs();
-                            (*handler).call((Retained::as_ptr(&urls),));
-                        } else {
-                            (*handler).call((std::ptr::null(),));
-                        }
-                    }
-                }
-            }
-
-            /// 媒体权限:直接 Grant(与 wry 默认一致)
-            #[unsafe(method(webView:requestMediaCapturePermissionForOrigin:initiatedByFrame:type:decisionHandler:))]
-            fn media_capture(
-                &self,
-                _webview: &WKWebView,
-                _origin: &WKSecurityOrigin,
-                _frame: &WKFrameInfo,
-                _capture_type: WKMediaCaptureType,
-                decision_handler: &Block<dyn Fn(WKPermissionDecision)>,
-            ) {
-                (*decision_handler).call((WKPermissionDecision::Grant,));
-            }
-        }
-    );
-
-    fn menu_item(mtm: MainThreadMarker, title: &str, sel: &str) -> Retained<NSMenuItem> {
-        let item = NSMenuItem::new(mtm);
-        item.setTitle(&NSString::from_str(title));
-        let sel_c = std::ffi::CString::new(sel).unwrap();
-        unsafe {
-            item.setAction(Some(Sel::register(&sel_c)));
-        }
-        item
-    }
-
-    /// 找到窗口里的 WKWebView,替换 UIDelegate 为我们自己;
-    /// 返回 WKWebView 裸指针(0 = 未找到),供主菜单把 Edit 项直接 target 到它
-    pub fn install(window: &tao::window::Window) -> usize {
+    /// 返回 WKWebView 裸指针(0 = 未找到)
+    pub fn find_webview(window: &tao::window::Window) -> usize {
         use wry::raw_window_handle::{HasWindowHandle, RawWindowHandle};
         let Ok(handle) = window.window_handle() else {
             return 0;
@@ -428,20 +331,10 @@ mod context_menu {
             for i in 0..count {
                 let sub = subviews.objectAtIndex(i); // Retained<NSView>
                 if sub.isKindOfClass(&WKWebView::class()) {
-                    let wk: &WKWebView = &*(&*sub as *const NSView as *const WKWebView);
-                    let mtm = MainThreadMarker::new().unwrap();
-                    let delegate = mtm.alloc::<DshContextMenuDelegate>();
-                    let delegate: Retained<DshContextMenuDelegate> =
-                        msg_send![delegate, init];
-                    let proto = ProtocolObject::from_ref(&*delegate);
-                    wk.setUIDelegate(Some(proto));
-                    // UIDelegate 是弱引用,必须自己持有;forget 使其存活到进程结束
-                    std::mem::forget(delegate);
-                    crate::log_msg("已接管右键菜单(仅保留 Cut/Copy/Paste)");
-                    return &*wk as *const WKWebView as usize;
+                    crate::log_msg("已定位 WKWebView(右键菜单已整体禁用)");
+                    return &*sub as *const NSView as usize;
                 }
             }
-            crate::log_msg("[右键菜单] 未找到 WKWebView,跳过接管");
         }
         0
     }
@@ -449,10 +342,11 @@ mod context_menu {
 
 #[cfg(not(target_os = "macos"))]
 mod context_menu {
-    pub fn install(_window: &tao::window::Window) -> usize {
+    pub fn find_webview(_window: &tao::window::Window) -> usize {
         0
     }
 }
+
 
 fn main() {
     let debug = std::env::var("DSH_DEBUG").is_ok() || std::env::args().any(|a| a == "--debug");
@@ -513,6 +407,7 @@ fn main() {
     let boot_html = BOOT_HTML.replace("__LOGO_B64__", LOGO_B64.trim());
     let mut builder = WebViewBuilder::new()
         .with_html(boot_html)
+        .with_initialization_script(CONTEXT_DISABLE_JS)
         .with_navigation_handler(Box::new(|nav_url| {
             log!("导航: {nav_url}");
             true
@@ -547,8 +442,8 @@ fn main() {
     }
     *webview_shared.lock().unwrap() = Some(webview);
 
-    // 接管右键菜单(仅保留 Cut/Copy/Paste),并拿回 WKWebView 指针
-    let wk_ptr = context_menu::install(&window);
+    // 定位 WKWebView(右键菜单已整体禁用)
+    let wk_ptr = context_menu::find_webview(&window);
     // macOS 主菜单(Edit 项直接 target 到 WKWebView),须在主线程
     setup_main_menu(wk_ptr);
 
