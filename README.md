@@ -23,16 +23,36 @@ open target/DSH.app
 - 关闭窗口即退出。
 - 应用图标:DeepSeek 大胖鲸(`assets/dsh-whale.jpg`,官方 1024px 图标,自动生成 `DSH.icns`;图标版权归 DeepSeek,仅作应用图标使用)。
 
+## Debug 模式(输出更多日志)
+
+```bash
+DSH_DEBUG=1 ./target/release/DSH     # 开启文件日志(默认 ~/Library/Logs/DSH.log)
+DSH_LOG=/tmp/dsh.log DSH_DEBUG=1 ... # 指定日志文件
+DSH_DEVTOOLS=1 DSH_DEBUG=1 ...       # 额外打开 WebKit 开发者工具(页面侧诊断)
+```
+
+日志内容:启动参数、窗口/WebView 生命周期、页面加载与导航、焦点变化、窗口缩放、
+`Cmd+R` 刷新,以及任何 panic 的回溯。
+
 > 仓库地址:https://github.com/ashuai/dsh-ui-wrapper
 
 ## 代码
 
-`src/main.rs` 总共约 80 行,依赖只有两个:
+`src/main.rs` 约 150 行,依赖只有两个:
 
 - `wry` — 跨平台 WebView 库(macOS 上用 WKWebView,即系统浏览器核心)
 - `winit` — 窗口与事件循环
 
 没有自定义 UI、没有 HTML/JS 前端代码、不打包任何前端资源。
+
+### 已知坑(已修复):窗口失焦崩溃
+
+早期版本用 wry 默认的 `build()` 挂载 WebView,它会用 `setContentView` **替换窗口的
+contentView**;而 winit 的窗口 delegate 假定 contentView 永远是它自己的视图,窗口
+失焦(`windowDidResignKey`,比如点击别的 App)时按错误类型解析对象 → 野指针
+`EXC_BAD_ACCESS` 崩溃。现在改用 **`build_as_child()`**(WebView 作为子视图,不替换
+contentView),并在 `Resized` 事件里 `set_bounds` 铺满窗口,失焦不再崩溃
+(实测连续失焦/聚焦均稳定)。
 
 ## 目录
 
