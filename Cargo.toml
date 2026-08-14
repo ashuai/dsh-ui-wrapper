@@ -1,0 +1,13 @@
+[package]
+name = "dsh"
+version = "0.1.0"
+edition = "2021"
+description = "DSH — 极简壳:用系统浏览器核心(WebKit)打开本机 dsh web 界面"
+
+[[bin]]
+name = "DSH"
+path = "src/main.rs"
+
+[dependencies]
+wry = "0.56"
+winit = "0.30"
