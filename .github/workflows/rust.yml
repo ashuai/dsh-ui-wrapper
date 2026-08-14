@@ -10,6 +10,11 @@ on:
       - '.github/workflows/**'
   workflow_dispatch: # GitHub → Actions → Run workflow 手动触发
 
+# 创建 GitHub Release(contents)与上传/下载构建产物(actions)需要写权限
+permissions:
+  contents: write
+  actions: write
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -19,7 +24,16 @@ jobs:
       fail-fast: false
       matrix:
         # macOS = 主要目标;Windows 11 = 验证 wry/winit 跨平台;Linux = 编译体检
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: macos-latest
+            package: ./make_app.sh && ditto -c -k --keepParent target/DSH.app DSH-macos.zip
+            asset: DSH-macos.zip
+          - os: windows-latest
+            package: Compress-Archive -Path target/release/DSH.exe -DestinationPath DSH-windows.zip
+            asset: DSH-windows.zip
+          - os: ubuntu-latest
+            package: tar czf DSH-linux.tar.gz -C target/release DSH
+            asset: DSH-linux.tar.gz
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -45,3 +59,61 @@ jobs:
 
       - name: Run tests
         run: cargo test --verbose
+
+      - name: Build release binaries
+        run: cargo build --release
+
+      - name: Package
+        run: ${{ matrix.package }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DSH-${{ matrix.os }}
+          path: ${{ matrix.asset }}
+
+  release:
+    needs: build # 三平台都编译通过才发版
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 需要对比提交范围判断 changelog 是否变化
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Determine version from changelog
+        id: ver
+        run: |
+          VERSION=$(ls changelog | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+\.md$' | sed -E 's/^v//; s/\.md$//' | sort -V | tail -1)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "检测到版本: $VERSION"
+
+      - name: Skip if changelog unchanged (push 且没动 changelog)
+        if: github.event_name == 'push'
+        run: |
+          CHANGED=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} -- changelog/ | head -1)
+          echo "changed=$CHANGED"
+          if [ -z "$CHANGED" ]; then echo "SKIP_RELEASE=1" >> "$GITHUB_ENV"; fi
+
+      - name: Publish GitHub Release
+        if: env.SKIP_RELEASE != '1' && steps.ver.outputs.version != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          # 把产物重命名为带版本号的名称
+          cd artifacts
+          for f in */DSH-*; do
+            mv "$f" "DSH-v${VERSION}-$(basename "$f" | sed 's/^DSH-//')"
+          done
+          cd ..
+          # 手动重跑时 tag 可能已存在:先删掉再重建(幂等)
+          gh release delete "v${VERSION}" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "v${VERSION}" \
+            --title "v${VERSION}" \
+            --notes "$(cat changelog/v${VERSION}.md)" \
+            artifacts/DSH-v${VERSION}-*

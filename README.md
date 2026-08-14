@@ -41,11 +41,13 @@ DSH_DEVTOOLS=1 DSH_DEBUG=1 ...       # 额外打开 WebKit 开发者工具(页�
 ## 发版流程(CI 触发规则)
 
 **只有 `changelog/` 出现新版本文件时才自动编译**,平时改代码不会触发 CI。
+编译通过后**自动创建 GitHub Release**:tag 为版本号、正文为该版本的 changelog、
+附件为三平台产物(macOS `DSH.app` 压缩包 / Windows exe / Linux 二进制)。
 
 1. 改完代码,准备发版
 2. 新建 `changelog/vX.Y.Z.md`,写这一版改了什么
-3. 提交 push 到 main → 自动跑 macOS / Windows / Linux 三平台编译
-4. 想随时手动验证:`GitHub → Actions → Run workflow`
+3. 提交 push 到 main → 自动编译三平台 → 自动发布 `vX.Y.Z` 到 Releases
+4. 想随时手动验证:`GitHub → Actions → Run workflow`(已发过的版本会重建)
 
 详见 [`changelog/README.md`](changelog/README.md)。
 

@@ -8,7 +8,9 @@
 1. 改完代码,准备发版
 2. 新建 `changelog/vX.Y.Z.md`(照着 `v0.1.0.md` 的格式写这一版改了什么)
 3. 提交并 push 到 main → 自动触发三平台编译验证
-4. 编译通过 = 这版可用;改完代码想立即验证 → GitHub → **Actions → Run workflow**(手动触发)
+4. 编译通过后**自动发布 GitHub Release**:tag = `vX.Y.Z`,正文 = 本文件内容,
+   附件 = macOS `DSH.app` 压缩包 + Windows exe + Linux 二进制
+5. 改完代码想立即验证 → GitHub → **Actions → Run workflow**(手动触发;已发过的版本会重建)
 
 ## 注意
 
