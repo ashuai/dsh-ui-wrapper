@@ -38,6 +38,17 @@ DSH_DEVTOOLS=1 DSH_DEBUG=1 ...       # 额外打开 WebKit 开发者工具(页�
 
 > 仓库地址:https://github.com/ashuai/dsh-ui-wrapper
 
+## 发版流程(CI 触发规则)
+
+**只有 `changelog/` 出现新版本文件时才自动编译**,平时改代码不会触发 CI。
+
+1. 改完代码,准备发版
+2. 新建 `changelog/vX.Y.Z.md`,写这一版改了什么
+3. 提交 push 到 main → 自动跑 macOS / Windows / Linux 三平台编译
+4. 想随时手动验证:`GitHub → Actions → Run workflow`
+
+详见 [`changelog/README.md`](changelog/README.md)。
+
 ## 代码
 
 `src/main.rs` 约 150 行,依赖只有两个:

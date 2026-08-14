@@ -1,22 +1,14 @@
 name: Rust
 
 on:
+  # 规则:只有 changelog/ 出现新版本文件(或 workflow 自身变更)才自动编译;
+  # 平时改 src/、README 等不触发。想随时手动编译用 workflow_dispatch。
   push:
     branches: [ "main" ]
-    # 只改动 Rust 相关文件才触发,README/文档等提交不编译
     paths:
-      - 'src/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
+      - 'changelog/**'
       - '.github/workflows/**'
-  pull_request:
-    branches: [ "main" ]
-    paths:
-      - 'src/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - '.github/workflows/**'
-  workflow_dispatch: # 支持在 Actions 页面手动触发
+  workflow_dispatch: # GitHub → Actions → Run workflow 手动触发
 
 env:
   CARGO_TERM_COLOR: always
