@@ -1,5 +1,7 @@
 # DSH — 极简 DSH 壳(macOS)
 
+[![Rust CI](https://github.com/ashuai/dsh-ui-wrapper/actions/workflows/rust.yml/badge.svg)](https://github.com/ashuai/dsh-ui-wrapper/actions/workflows/rust.yml)
+
 一个超简单的 macOS 原生窗口:用**系统浏览器核心(WebKit / WKWebView)直接打开
 `http://127.0.0.1:3080`** 的 dsh web 界面。不画任何界面、不重新实现聊天 UI,
 窗口里就是 dsh 自己的网页,但不再需要打开 Safari/Chrome 这样的独立浏览器。
