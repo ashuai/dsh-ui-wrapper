@@ -37,7 +37,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # wry 在 Linux 上需要 WebKitGTK 等系统依赖才能编译
       - name: Install Linux system deps
@@ -66,7 +66,7 @@ jobs:
       - name: Package
         run: ${{ matrix.package }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: DSH-${{ matrix.os }}
           path: ${{ matrix.asset }}
@@ -77,11 +77,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # 需要对比提交范围判断 changelog 是否变化
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
 
