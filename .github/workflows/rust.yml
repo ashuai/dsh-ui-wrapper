@@ -92,27 +92,25 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "检测到版本: $VERSION"
 
-      - name: Skip if changelog unchanged (push 且没动 changelog)
-        if: github.event_name == 'push'
-        run: |
-          CHANGED=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} -- changelog/ | head -1)
-          echo "changed=$CHANGED"
-          if [ -z "$CHANGED" ]; then echo "SKIP_RELEASE=1" >> "$GITHUB_ENV"; fi
-
       - name: Publish GitHub Release
-        if: env.SKIP_RELEASE != '1' && steps.ver.outputs.version != ''
+        # 规则:changelog 中最高版本对应的 Release 不存在 → 发布。
+        # 不依赖 git diff before..sha(曾误判导致跳过);workflow-only 推送时
+        # 版本不变且 Release 已存在 → 自动跳过,不会重复发版。
+        if: steps.ver.outputs.version != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${{ steps.ver.outputs.version }}"
+          if gh release view "v${VERSION}" >/dev/null 2>&1; then
+            echo "v${VERSION} 已存在,跳过发布"
+            exit 0
+          fi
           # 把产物重命名为带版本号的名称
           cd artifacts
           for f in */DSH-*; do
             mv "$f" "DSH-v${VERSION}-$(basename "$f" | sed 's/^DSH-//')"
           done
           cd ..
-          # 手动重跑时 tag 可能已存在:先删掉再重建(幂等)
-          gh release delete "v${VERSION}" --yes --cleanup-tag 2>/dev/null || true
           gh release create "v${VERSION}" \
             --title "v${VERSION}" \
             --notes "$(cat changelog/v${VERSION}.md)" \
