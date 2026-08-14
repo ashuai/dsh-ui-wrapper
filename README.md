@@ -21,7 +21,9 @@ open target/DSH.app
 - 原生窗口内嵌系统 WebKit,加载 dsh 网页,无浏览器外壳、无地址栏/标签页。
 - `Cmd+R` 刷新页面(后端重启后很有用)。
 - 关闭窗口即退出。
-- 应用图标:DeepSeek 大胖鲸(`assets/dsh-whale.jpg`,官方 1024px 图标,自动生成 `DSH.icns`)。
+- 应用图标:DeepSeek 大胖鲸(`assets/dsh-whale.jpg`,官方 1024px 图标,自动生成 `DSH.icns`;图标版权归 DeepSeek,仅作应用图标使用)。
+
+> 仓库地址:https://github.com/ashuai/dsh-ui-wrapper
 
 ## 代码
 
