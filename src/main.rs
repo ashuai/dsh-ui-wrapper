@@ -1,16 +1,15 @@
 // DSH — 极简壳:用系统浏览器核心(WebKit / WKWebView)打开本机 dsh web 界面。
 //
-// 修复说明:必须用 build_as_child 方式挂载 WebView(子视图,不替换窗口 contentView)。
-// wry 默认的 build() 会把 contentView 换成自己的 WryWebViewParent,而 winit 的
-// 窗口 delegate 假定 contentView 永远是 WinitView —— 窗口失焦(resignKey)时按
-// WinitView 解析 WebView 对象 → 野指针 → EXC_BAD_ACCESS 崩溃。改为子视图后
-// contentView 保持原样,失焦事件走 winit 自己的视图,不再崩溃。
+// 窗口/事件循环用 tao(Tauri 维护的 winit 分支)+ wry 默认 build():
+// 与 Tauri 相同的组合。这样:
+//   1. 输入(含中文输入法 IME)走正常路径——wry 默认模式会 makeFirstResponder;
+//     之前为绕崩溃用的 build_as_child(子视图)跳过这一步,击键/输入法会卡。
+//   2. 不会像 winit 那样在 contentView 被替换后,失焦时按错误类型解析而崩溃。
 //
 // Debug 模式(输出更多日志):
 //   DSH_DEBUG=1 ./DSH           # 开启文件日志(默认 ~/Library/Logs/DSH.log)
 //   DSH_LOG=/path/to.log ./DSH  # 指定日志文件
 //   DSH_DEVTOOLS=1 ./DSH        # 同时打开 WebKit 开发者工具(页面侧诊断)
-// 日志包含:生命周期、页面加载、导航、焦点变化、缩放、刷新、panic 回溯。
 
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -18,15 +17,14 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
-use wry::{PageLoadEvent, Rect, WebView, WebViewBuilder};
-use winit::{
-    application::ApplicationHandler,
-    dpi::{LogicalPosition, LogicalSize},
-    event::{ElementState, KeyEvent, WindowEvent},
-    event_loop::{ActiveEventLoop, EventLoop},
+use tao::{
+    dpi::LogicalSize,
+    event::{ElementState, Event, KeyEvent, WindowEvent},
+    event_loop::{ControlFlow, EventLoop},
     keyboard::{Key, ModifiersState},
-    window::{Window, WindowId},
+    window::WindowBuilder,
 };
+use wry::{PageLoadEvent, WebViewBuilder};
 
 const URL: &str = "http://127.0.0.1:3080";
 
@@ -78,111 +76,6 @@ fn init_logging(debug: bool) {
     }
 }
 
-// ---------------- 应用 ----------------
-struct App {
-    window: Option<Window>,
-    webview: Option<WebView>,
-    modifiers: ModifiersState,
-    devtools: bool,
-}
-
-impl App {
-    fn resize_webview(&self, size: winit::dpi::PhysicalSize<u32>) {
-        if let (Some(w), Some(wv)) = (&self.window, &self.webview) {
-            let size = size.to_logical::<u32>(w.scale_factor());
-            let _ = wv.set_bounds(Rect {
-                position: LogicalPosition::new(0, 0).into(),
-                size: LogicalSize::new(size.width, size.height).into(),
-            });
-        }
-    }
-}
-
-impl ApplicationHandler for App {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        log!("resumed(window={})", self.window.is_some());
-        if self.window.is_some() {
-            return; // 已创建过窗口(例如 macOS 重新激活)
-        }
-        let window = event_loop
-            .create_window(
-                Window::default_attributes()
-                    .with_title("DSH")
-                    .with_inner_size(LogicalSize::new(1100.0, 760.0)),
-            )
-            .expect("创建窗口失败");
-        log!("窗口已创建 {:?}", window.inner_size());
-
-        let mut builder = WebViewBuilder::new()
-            .with_url(URL)
-            .with_navigation_handler(Box::new(|url| {
-                log!("导航: {url}");
-                true // 放行所有导航
-            }))
-            .with_on_page_load_handler(Box::new(|event, url| {
-                let phase = match event {
-                    PageLoadEvent::Started => "开始",
-                    PageLoadEvent::Finished => "完成",
-                };
-                log!("页面加载{phase}: {url}");
-            }));
-        if self.devtools {
-            builder = builder.with_devtools(true);
-        }
-        // 关键:build_as_child 而不是 build()(避免替换 contentView 导致失焦崩溃)
-        let webview = builder.build_as_child(&window).expect("创建 WebView 失败");
-        log!("WebView 已创建(build_as_child)");
-        if self.devtools {
-            webview.open_devtools();
-            log!("已打开开发者工具");
-        }
-
-        let size = window.inner_size();
-        self.window = Some(window);
-        self.webview = Some(webview);
-        self.resize_webview(size);
-    }
-
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
-        event: WindowEvent,
-    ) {
-        match event {
-            WindowEvent::CloseRequested => {
-                log!("窗口关闭,退出");
-                event_loop.exit();
-            }
-            WindowEvent::Resized(size) => {
-                log!("窗口缩放: {size:?}");
-                self.resize_webview(size);
-            }
-            WindowEvent::Focused(focused) => {
-                log!("焦点: {focused}");
-            }
-            WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        state: ElementState::Pressed,
-                        logical_key: Key::Character(c),
-                        ..
-                    },
-                ..
-            } => {
-                if self.modifiers.super_key() && (c == "r" || c == "R") {
-                    log!("Cmd+R 刷新");
-                    if let Some(wv) = &self.webview {
-                        let _ = wv.reload();
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
 fn main() {
     let debug = std::env::var("DSH_DEBUG").is_ok()
         || std::env::args().any(|a| a == "--debug");
@@ -190,13 +83,67 @@ fn main() {
     init_logging(debug);
     log!("debug={debug} devtools={devtools} url={URL}");
 
-    let event_loop = EventLoop::new().expect("创建事件循环失败");
-    let mut app = App {
-        window: None,
-        webview: None,
-        modifiers: ModifiersState::empty(),
-        devtools,
-    };
-    event_loop.run_app(&mut app).expect("运行事件循环失败");
-    log!("正常退出");
+    let event_loop = EventLoop::new();
+    let window = WindowBuilder::new()
+        .with_title("DSH")
+        .with_inner_size(LogicalSize::new(1100.0, 760.0))
+        .build(&event_loop)
+        .expect("创建窗口失败");
+    log!("窗口已创建 {:?}", window.inner_size());
+
+    let mut builder = WebViewBuilder::new()
+        .with_url(URL)
+        .with_navigation_handler(Box::new(|url| {
+            log!("导航: {url}");
+            true // 放行所有导航
+        }))
+        .with_on_page_load_handler(Box::new(|event, url| {
+            let phase = match event {
+                PageLoadEvent::Started => "开始",
+                PageLoadEvent::Finished => "完成",
+            };
+            log!("页面加载{phase}: {url}");
+        }));
+    if devtools {
+        builder = builder.with_devtools(true);
+    }
+    // 默认 build(非 child):输入/输入法走正常路径,窗口缩放自动适配
+    let webview = builder.build(&window).expect("创建 WebView 失败");
+    log!("WebView 已创建(默认 build)");
+    if devtools {
+        webview.open_devtools();
+        log!("已打开开发者工具");
+    }
+
+    let mut modifiers = ModifiersState::empty();
+    event_loop.run(move |event, _, control_flow| {
+        *control_flow = ControlFlow::Wait;
+        if let Event::WindowEvent { event, .. } = event {
+            match event {
+                WindowEvent::CloseRequested => {
+                    log!("窗口关闭,退出");
+                    *control_flow = ControlFlow::Exit;
+                }
+                WindowEvent::Focused(focused) => {
+                    log!("焦点: {focused}");
+                }
+                WindowEvent::ModifiersChanged(m) => modifiers = m,
+                WindowEvent::KeyboardInput {
+                    event:
+                        KeyEvent {
+                            state: ElementState::Pressed,
+                            logical_key: Key::Character(c),
+                            ..
+                        },
+                    ..
+                } => {
+                    if modifiers.super_key() && (c == "r" || c == "R") {
+                        log!("Cmd+R 刷新");
+                        let _ = webview.reload();
+                    }
+                }
+                _ => {}
+            }
+        }
+    });
 }

@@ -10,4 +10,4 @@ path = "src/main.rs"
 
 [dependencies]
 wry = { version = "0.56", features = ["devtools"] }
-winit = "0.30"
+tao = "0.36"

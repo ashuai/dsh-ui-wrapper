@@ -60,14 +60,16 @@ DSH_DEVTOOLS=1 DSH_DEBUG=1 ...       # 额外打开 WebKit 开发者工具(页�
 
 没有自定义 UI、没有 HTML/JS 前端代码、不打包任何前端资源。
 
-### 已知坑(已修复):窗口失焦崩溃
+### 已知坑(已修复):窗口失焦崩溃 + 输入卡顿
 
-早期版本用 wry 默认的 `build()` 挂载 WebView,它会用 `setContentView` **替换窗口的
-contentView**;而 winit 的窗口 delegate 假定 contentView 永远是它自己的视图,窗口
-失焦(`windowDidResignKey`,比如点击别的 App)时按错误类型解析对象 → 野指针
-`EXC_BAD_ACCESS` 崩溃。现在改用 **`build_as_child()`**(WebView 作为子视图,不替换
-contentView),并在 `Resized` 事件里 `set_bounds` 铺满窗口,失焦不再崩溃
-(实测连续失焦/聚焦均稳定)。
+早期用 winit 0.30 + wry 默认 `build()`:wry 会用 `setContentView` 替换窗口 contentView,
+而 winit 的窗口 delegate 假定 contentView 永远是自己的视图,窗口失焦时按错误类型解析
+→ 野指针崩溃。当时绕法是用 `build_as_child`(子视图,不替换 contentView),但 wry 的
+子视图路径在 macOS 上不会 `makeFirstResponder`,导致**键盘/中文输入法走次级路径、打字卡顿**。
+
+现在改用 **tao(Tauri 维护的 winit 分支)+ wry 默认 `build()`**——与 Tauri 相同的组合:
+tao 的窗口代理能正确容忍 contentView 被替换(失焦不再崩溃),默认 build 保证输入/IME
+走正常路径(打字不卡)。窗口缩放由 wry 的 autoresizing 自动适配。
 
 ## 目录
 
