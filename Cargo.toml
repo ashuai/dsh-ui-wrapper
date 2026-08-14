@@ -11,3 +11,4 @@ path = "src/main.rs"
 [dependencies]
 wry = { version = "0.56", features = ["devtools"] }
 tao = "0.36"
+serde_json = "1"

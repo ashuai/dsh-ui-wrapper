@@ -19,6 +19,12 @@ done
 iconutil -c icns "$ICONSET" -o assets/DSH.icns
 rm -rf "$ICONSET"
 
+echo "==> 生成自举页 logo(base64 内嵌,256px)"
+TMPPNG=$(mktemp -t dsh-logo).png
+sips -s format png -Z 256 assets/dsh-whale.jpg --out "$TMPPNG" >/dev/null
+base64 -i "$TMPPNG" | tr -d '\n' > assets/boot-logo.b64
+rm -f "$TMPPNG"
+
 echo "==> 组装 target/DSH.app"
 APP="target/DSH.app"
 rm -rf "$APP"

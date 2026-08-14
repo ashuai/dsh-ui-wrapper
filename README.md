@@ -1,78 +1,115 @@
-# DSH — 极简 DSH 壳(macOS)
+# DSH — Minimal Shell for the dsh Web UI (macOS)
 
 [![Rust CI](https://github.com/ashuai/dsh-ui-wrapper/actions/workflows/rust.yml/badge.svg)](https://github.com/ashuai/dsh-ui-wrapper/actions/workflows/rust.yml)
 
-一个超简单的 macOS 原生窗口:用**系统浏览器核心(WebKit / WKWebView)直接打开
-`http://127.0.0.1:3080`** 的 dsh web 界面。不画任何界面、不重新实现聊天 UI,
-窗口里就是 dsh 自己的网页,但不再需要打开 Safari/Chrome 这样的独立浏览器。
+> English | [中文版](README.zh.md)
 
-## 运行
+A minimal native macOS window that opens the dsh web UI at
+`http://127.0.0.1:3080` using the **system browser engine (WebKit / WKWebView)**.
+No custom UI, no browser chrome, no tabs — just the dsh GUI in its own window,
+with a small backend auto-start helper so the page is there when you open it.
+
+## Features
+
+- Native window with the system WebKit engine (same engine as Safari, no WebView wrapper of our own, zero frontend code shipped)
+- **Backend auto-start**: probes `127.0.0.1:3080` on launch; if it's down, starts dsh automatically (`bunx` → `pnpm` → `npm` → `dsh`), shows progress toasts (`Opening…` / `Starting… Ns` / `Ready`), and loads the page when the port is up
+- **Fast-fail**: if the started process dies early (port taken, missing deps), an error panel with the backend log tail appears in ~0.4s instead of waiting for a timeout
+- Adaptive light/dark boot page (follows system appearance)
+- `Cmd+R` reload (handy after a backend restart); closing the window quits
+- DeepSeek whale app icon (official 1024px asset; icon copyright belongs to DeepSeek)
+
+## Requirements
+
+- macOS 12+
+- dsh backend: optional. If `127.0.0.1:3080` is already up, the app just loads it.
+  Otherwise it auto-starts dsh — which needs one of `bunx` / `pnpm` / `npm` (or a global `dsh`)
+  available on PATH or in common install dirs.
+
+## Quick start
 
 ```bash
 cd DSH
-./make_app.sh                   # 编译 + 打包 target/DSH.app(含大胖鲸图标)
+./make_app.sh                   # build + generate icon + assemble target/DSH.app
 open target/DSH.app
 ```
 
-也可以直接 `./target/release/DSH` 跑裸二进制(此时无 .app 图标)。
+Or run the raw binary: `./target/release/DSH`.
 
-先确保 dsh 后端已启动且监听 3080(通常 `dsh web` 会启动)。
+## How it works
 
-## 功能
-
-- 原生窗口内嵌系统 WebKit,加载 dsh 网页,无浏览器外壳、无地址栏/标签页。
-- `Cmd+R` 刷新页面(后端重启后很有用)。
-- 关闭窗口即退出。
-- 应用图标:DeepSeek 大胖鲸(`assets/dsh-whale.jpg`,官方 1024px 图标,自动生成 `DSH.icns`;图标版权归 DeepSeek,仅作应用图标使用)。
-
-## Debug 模式(输出更多日志)
-
-```bash
-DSH_DEBUG=1 ./target/release/DSH     # 开启文件日志(默认 ~/Library/Logs/DSH.log)
-DSH_LOG=/tmp/dsh.log DSH_DEBUG=1 ... # 指定日志文件
-DSH_DEVTOOLS=1 DSH_DEBUG=1 ...       # 额外打开 WebKit 开发者工具(页面侧诊断)
+```
+Launch
+ ├─ Show boot page (whale logo, adaptive theme, toast area)
+ ├─ Background thread:
+ │    ① probe 127.0.0.1:3080 (TCP, ~300ms)
+ │       ├─ up        → toast "Ready" → load http://127.0.0.1:3080
+ │       └─ down      → find runner (bunx/pnpm/npm/dsh, OS-aware) → spawn `… dsh web`
+ │                      (detached, logs → ~/Library/Logs/DSH-backend.log)
+ │                      poll every 400ms, toast ticks "Starting… Ns"
+ │                      ├─ process died early → error panel (fast-fail)
+ │                      └─ timeout (default 30s) → error panel + Retry
+ └─ Ready → load the real page
 ```
 
-日志内容:启动参数、窗口/WebView 生命周期、页面加载与导航、焦点变化、窗口缩放、
-`Cmd+R` 刷新,以及任何 panic 的回溯。
+The spawned dsh keeps running after the app quits (detached), so reopening is instant.
 
-> 仓库地址:https://github.com/ashuai/dsh-ui-wrapper
+## Environment variables
 
-## 发版流程(CI 触发规则)
+| Variable | Default | Description |
+| --- | --- | --- |
+| `DSH_URL` | `http://127.0.0.1:3080` | Backend address |
+| `DSH_NO_AUTOSTART` | off | Only probe; show error instead of starting dsh |
+| `DSH_BACKEND_TIMEOUT` | `30` | Seconds to wait for the backend after spawning |
+| `DSH_BACKEND_LOG` | `~/Library/Logs/DSH-backend.log` | Log file of the spawned backend |
+| `DSH_DEBUG` | off | Enable shell log |
+| `DSH_LOG` | `~/Library/Logs/DSH.log` | Shell log file (with `DSH_DEBUG=1`) |
+| `DSH_DEVTOOLS` | off | Open WebKit developer tools (page-side diagnostics) |
 
-**只有 `changelog/` 出现新版本文件时才自动编译**,平时改代码不会触发 CI。
-编译通过后**自动创建 GitHub Release**:tag 为版本号、正文为该版本的 changelog、
-附件为三平台产物(macOS `DSH.app` 压缩包 / Windows exe / Linux 二进制)。
+## Debug mode
 
-1. 改完代码,准备发版
-2. 新建 `changelog/vX.Y.Z.md`,写这一版改了什么
-3. 提交 push 到 main → 自动编译三平台 → 自动发布 `vX.Y.Z` 到 Releases
-4. 想随时手动验证:`GitHub → Actions → Run workflow`(已发过的版本会重建)
+```bash
+DSH_DEBUG=1 ./target/DSH.app/Contents/MacOS/DSH
+# optionally: DSH_LOG=/tmp/dsh.log DSH_BACKEND_LOG=/tmp/dsh-backend.log
+```
 
-详见 [`changelog/README.md`](changelog/README.md)。
+`DSH.log` records the bootstrap state machine (probe / runner / spawn / ready / timeout);
+`DSH-backend.log` holds the spawned dsh's own output — the first place to look when
+auto-start fails. Panics are also written to the log.
 
-## 代码
+## Cross-platform
 
-`src/main.rs` 约 150 行,依赖只有两个:
+macOS is the primary target. The same code builds on Windows (WebView2) and
+Linux (WebKitGTK) — the runner discovery is OS-aware (PATH separators,
+`.exe/.cmd/.bat` on Windows, per-OS fallback dirs). CI builds all three platforms;
+see `make_app.sh` for the macOS-only packaging step.
 
-- `wry` — 跨平台 WebView 库(macOS 上用 WKWebView,即系统浏览器核心)
-- `winit` — 窗口与事件循环
+## CI & releases
 
-没有自定义 UI、没有 HTML/JS 前端代码、不打包任何前端资源。
+CI is gated on the changelog: **only when `changelog/` gains a new version file
+(`vX.Y.Z.md`) does CI build all three platforms and auto-publish a GitHub Release**
+(tag = version, notes = changelog content, assets = macOS `.app` zip / Windows exe / Linux binary).
+Manual runs: GitHub → Actions → Run workflow.
 
-### 已知坑(已修复):窗口失焦崩溃 + 输入卡顿
+Flow: write code → create `changelog/vX.Y.Z.md` → push → CI builds → release appears.
 
-早期用 winit 0.30 + wry 默认 `build()`:wry 会用 `setContentView` 替换窗口 contentView,
-而 winit 的窗口 delegate 假定 contentView 永远是自己的视图,窗口失焦时按错误类型解析
-→ 野指针崩溃。当时绕法是用 `build_as_child`(子视图,不替换 contentView),但 wry 的
-子视图路径在 macOS 上不会 `makeFirstResponder`,导致**键盘/中文输入法走次级路径、打字卡顿**。
+## Known issues (fixed)
 
-现在改用 **tao(Tauri 维护的 winit 分支)+ wry 默认 `build()`**——与 Tauri 相同的组合:
-tao 的窗口代理能正确容忍 contentView 被替换(失焦不再崩溃),默认 build 保证输入/IME
-走正常路径(打字不卡)。窗口缩放由 wry 的 autoresizing 自动适配。
+- **Crash on window deactivation** (early versions): wry's default `build()` replaces the
+  window's contentView, which vanilla winit misinterprets on focus loss → segfault.
+  Fixed by using **tao** (Tauri's winit fork) + wry's default `build()` — the same combo
+  Tauri uses: no crash, and keyboard/IME input works normally.
+- **Typing / IME lag**: caused by the child-webview workaround; resolved by the same
+  tao + default-build switch.
 
-## 目录
+## Repository
 
-- `src/main.rs` — 全部代码
-- `make_app.sh` — 打包 `DSH.app`(编译 + 生成图标 + 写 Info.plist)
-- `assets/dsh-whale.jpg`、`assets/DSH.icns` — 大胖鲸图标素材
+- `src/main.rs` — app entry, boot page, event loop
+- `src/backend.rs` — bootstrap state machine (probe / runner / spawn / poll / fast-fail)
+- `make_app.sh` — build + icon + `.app` assembly
+- `assets/` — whale icon (source jpg, `DSH.icns`, boot-page base64 logo)
+- `changelog/` — version entries that trigger CI/release
+- `DSH-docs/` (outside this repo) — requirements & design docs
+
+## License
+
+Apache-2.0. The whale icon is DeepSeek's brand asset (used here as the app icon only).
