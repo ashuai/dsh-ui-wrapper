@@ -447,6 +447,10 @@ fn main() {
     // macOS 主菜单(Edit 项直接 target 到 WKWebView),须在主线程
     setup_main_menu(wk_ptr);
 
+    // 退出清理兜底:任何 process::exit(Cmd+Q / 关窗 / SIGTERM)都会杀掉拉起的后端
+    backend::register_exit_cleanup();
+    backend::install_sigterm_handler();
+
     // 事件循环
     let mut modifiers = ModifiersState::empty();
     let mut loaded = false;
@@ -461,7 +465,8 @@ fn main() {
         if let Event::WindowEvent { event, .. } = event {
             match event {
                 WindowEvent::CloseRequested => {
-                    log!("窗口关闭,退出");
+                    log!("窗口关闭,退出(顺带杀后端)");
+                    backend::kill_backend();
                     *control_flow = ControlFlow::Exit;
                 }
                 WindowEvent::Focused(focused) => {

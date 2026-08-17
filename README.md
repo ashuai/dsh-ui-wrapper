@@ -44,14 +44,15 @@ Launch
  │    ① probe 127.0.0.1:3080 (TCP, ~300ms)
  │       ├─ up        → toast "Ready" → load http://127.0.0.1:3080
  │       └─ down      → find runner (bunx/pnpm/npm/dsh, OS-aware) → spawn `… dsh web`
- │                      (detached, logs → ~/Library/Logs/DSH-backend.log)
+ │                      (killed together with the app on exit; logs → ~/Library/Logs/DSH-backend.log)
  │                      poll every 400ms, toast ticks "Starting… Ns"
  │                      ├─ process died early → error panel (fast-fail)
  │                      └─ timeout (default 30s) → error panel + Retry
  └─ Ready → load the real page
 ```
 
-The spawned dsh keeps running after the app quits (detached), so reopening is instant.
+The spawned dsh is tied to the app's lifetime: closing the app (window close, Cmd+Q,
+or SIGTERM) also stops the backend it started. A backend you started yourself is never touched.
 
 ## Environment variables
 
@@ -108,8 +109,6 @@ Flow: write code → create `changelog/vX.Y.Z.md` → push → CI builds → rel
 - `make_app.sh` — build + icon + `.app` assembly
 - `assets/` — whale icon (source jpg, `DSH.icns`, boot-page base64 logo)
 - `changelog/` — version entries that trigger CI/release
-- `DSH-docs/` (outside this repo) — requirements & design docs
-
 ## License
 
 Apache-2.0. The whale icon is DeepSeek's brand asset (used here as the app icon only).

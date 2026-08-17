@@ -43,14 +43,15 @@ open target/DSH.app
  │    ① 探测 127.0.0.1:3080(TCP,约 300ms)
  │       ├─ 通   → toast「已就绪」→ 载入 http://127.0.0.1:3080
  │       └─ 不通 → 找启动器(bunx/pnpm/npm/dsh,按系统分支)→ spawn「… dsh web」
- │                  (detach 常驻,日志 → ~/Library/Logs/DSH-backend.log)
+ │                  (随 App 退出一起终止,日志 → ~/Library/Logs/DSH-backend.log)
  │                  每 400ms 轮询,toast 每秒报「启动中… 已等待 Ns」
  │                  ├─ 进程提前退出 → 错误面板(快速失败)
  │                  └─ 超时(默认 30s)→ 错误面板 + 重试
  └─ 就绪 → 载入真实页面
 ```
 
-被拉起的 dsh 在 App 退出后**继续常驻运行**,重开秒连。
+被拉起的 dsh **随 App 生命周期绑定**:关窗、⌘Q 或 `kill` 进程时,App 会连它拉起的后端一起停掉;
+你自己手动启动的后端不受影响。
 
 ## 环境变量
 
@@ -102,8 +103,6 @@ CI 以 changelog 为门:**只有当 `changelog/` 出现新版本文件(`vX.Y.Z.m
 - `make_app.sh` — 编译 + 图标 + `.app` 组装
 - `assets/` — 大胖鲸图标(源 jpg、`DSH.icns`、自举页 base64 logo)
 - `changelog/` — 触发 CI/发版的版本条目
-- `DSH-docs/`(本仓库外)— 需求与设计文档
-
 ## 许可证
 
 Apache-2.0。大胖鲸图标为 DeepSeek 品牌资产(此处仅作应用图标使用)。

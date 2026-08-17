@@ -5,6 +5,7 @@ use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::Sender;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::log_msg;
@@ -162,8 +163,90 @@ fn log_tail(path: &PathBuf, n: usize) -> String {
     lines[start..].join("\n")
 }
 
-/// 拉起 dsh 后端。返回子进程句柄,由调用方观察(进程提前退出 = 快速失败);
-/// 就绪后 drop 掉句柄即 detach 常驻(不 wait 不 kill,进程独立存活)。
+/// 成功拉起的后端子进程句柄:App 存活期间持有,退出时随 App 一起杀
+static BACKEND_CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
+
+fn backend_slot() -> &'static Mutex<Option<Child>> {
+    BACKEND_CHILD.get_or_init(|| Mutex::new(None))
+}
+
+/// Unix:让子进程成为新进程组的组长(pgid == pid),便于整组终止
+#[cfg(unix)]
+fn spawn_in_group(cmd: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    cmd.process_group(0);
+}
+#[cfg(not(unix))]
+fn spawn_in_group(_cmd: &mut Command) {}
+
+/// 终止整个进程组:SIGTERM → 最多等 2s → SIGKILL
+#[cfg(unix)]
+fn terminate_group(child: &mut Child) {
+    let pid = child.id() as i32;
+    unsafe {
+        libc::kill(-pid, libc::SIGTERM);
+    }
+    for _ in 0..40 {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+            Err(_) => return,
+        }
+    }
+    unsafe {
+        libc::kill(-pid, libc::SIGKILL);
+    }
+    let _ = child.wait();
+}
+#[cfg(not(unix))]
+fn terminate_group(child: &mut Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// 关掉 App 时杀掉它拉起的后端(整进程组)
+pub fn kill_backend() {
+    if let Ok(mut g) = backend_slot().lock() {
+        if let Some(mut c) = g.take() {
+            blog(&format!("关停后端:杀进程组 pid={}", c.id()));
+            terminate_group(&mut c);
+        }
+    }
+}
+
+/// atexit 兜底:Cmd+Q(terminate:)、process::exit 等退出路径都会触发
+#[cfg(unix)]
+extern "C" fn atexit_kill_backend() {
+    kill_backend();
+}
+
+#[cfg(unix)]
+pub fn register_exit_cleanup() {
+    unsafe {
+        libc::atexit(atexit_kill_backend);
+    }
+}
+#[cfg(not(unix))]
+pub fn register_exit_cleanup() {}
+
+/// SIGTERM 优雅退出:kill <pid> 也会触发 atexit 清理(杀后端),不留孤儿
+#[cfg(unix)]
+extern "C" fn handle_sigterm(_sig: libc::c_int) {
+    std::process::exit(0);
+}
+
+#[cfg(unix)]
+pub fn install_sigterm_handler() {
+    let handler: unsafe extern "C" fn(libc::c_int) = handle_sigterm;
+    unsafe {
+        libc::signal(libc::SIGTERM, handler as *const () as libc::sighandler_t);
+    }
+}
+#[cfg(not(unix))]
+pub fn install_sigterm_handler() {}
+
+/// 拉起 dsh 后端,放入独立进程组(退出时整组 kill,覆盖 bunx→node 整棵树)。
+/// 返回子进程句柄,由调用方观察(进程提前退出 = 快速失败)。
 fn spawn_dsh(
     runner: (&str, PathBuf, Vec<&'static str>),
     log_path: &PathBuf,
@@ -182,6 +265,7 @@ fn spawn_dsh(
         path_parts.push(p);
     }
     path_parts.extend(fallback_dirs().iter().map(|d| d.display().to_string()));
+    spawn_in_group(&mut cmd); // 独立进程组:退出时整组杀
     cmd.args(&runner.2)
         .env("PATH", path_parts.join(&path_sep().to_string()))
         .stdin(Stdio::null())
@@ -262,7 +346,8 @@ pub fn run_bootstrap(cfg: &BootConfig, evt: &Sender<BootEvent>) {
             blog("后端端口就绪");
             let _ = evt.send(BootEvent::Toast { text: "已就绪".into(), kind: "success" });
             let _ = evt.send(BootEvent::Ready);
-            drop(child); // detach:进程继续独立运行
+            // 持有句柄:App 退出时随进程组一起杀
+            *backend_slot().lock().unwrap() = child.take();
             return;
         }
         // 快速失败:启动进程已退出(端口被占 / 依赖缺失 / 命令失败等,通常 1s 内)
@@ -287,6 +372,10 @@ pub fn run_bootstrap(cfg: &BootConfig, evt: &Sender<BootEvent>) {
             let _ = evt.send(BootEvent::Toast { text: "启动超时".into(), kind: "error" });
             let _ = evt.send(BootEvent::ErrorPanel { message, log_tail: tail });
             blog("等待超时");
+            // 超时但进程还活着(可能在下载):整组杀掉,不留孤儿
+            if let Some(mut c) = child.take() {
+                terminate_group(&mut c);
+            }
             return;
         }
         if last_toast.elapsed() >= Duration::from_secs(1) {
